@@ -1,0 +1,114 @@
+import { useEffect, useRef, useState } from 'react';
+import { cloneConfig, cssExport, DEFAULT_CONFIG, validateConfig } from './config.js';
+import { clamp, dateInput, dayOf, previewHeight } from './model.js';
+import { themes } from './demo.js';
+import { NumberField, SelectField, Toggle, LevelEditor } from './Controls.jsx';
+import { Preview } from './Preview.jsx';
+
+const STORAGE = 'timeline-workbench-v1';
+const BASELINE = { id: 'baseline', name: 'Ausgangsstand', config: DEFAULT_CONFIG };
+const calendarNames = { year: 'Jahr', month: 'Monat', week: 'Woche', day: 'Tag' };
+function restore() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE));
+    const config = saved ? validateConfig(saved.config) : cloneConfig(DEFAULT_CONFIG);
+    const presets = [];
+    for (const p of saved?.presets ?? []) {
+      try {
+        if (typeof p.id === 'string' && p.id !== 'baseline' && typeof p.name === 'string' && p.name.trim() && !presets.some(v => v.id === p.id)) presets.push({ id: p.id, name: p.name, config: validateConfig(p.config) });
+      } catch { /* Ein ungültiges Preset soll die anderen gespeicherten Varianten nicht ersetzen. */ }
+    }
+    return { config, presets };
+  } catch { return { config: cloneConfig(DEFAULT_CONFIG), presets: [] }; }
+}
+function download(text, name, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const link = document.createElement('a');
+  link.href = url; link.download = name; link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+export function App() {
+  const animation = useRef(null);
+  const [saved] = useState(restore);
+  const [config, setConfig] = useState(saved.config), [presets, setPresets] = useState(saved.presets);
+  const [view, setView] = useState({ center: dayOf('2025-06-01') + 76.5, span: 153 });
+  const [focus, setFocus] = useState({ mode: 'auto', hover: null, fixed: dayOf('2025-08-01'), selected: null });
+  const [filter, setFilter] = useState(''), [previewWidth, setPreviewWidth] = useState('auto');
+  const [overrides, setOverrides] = useState({});
+  const [ab, setAB] = useState(false), [aId, setAId] = useState('baseline'), [bId, setBId] = useState(saved.presets[0]?.id ?? 'baseline');
+  const [selectedPreset, setSelectedPreset] = useState(''), [presetName, setPresetName] = useState('');
+  const [exportText, setExportText] = useState(''), [exportType, setExportType] = useState('json'), [message, setMessage] = useState('');
+  const variants = [BASELINE, ...presets];
+  const a = variants.find(p => p.id === aId) ?? BASELINE, b = variants.find(p => p.id === bId) ?? BASELINE;
+  const bounds = ab ? { minDays: Math.max(a.config.zoom.minDays, b.config.zoom.minDays), maxDays: Math.min(a.config.zoom.maxDays, b.config.zoom.maxDays) } : config.zoom;
+  const compatible = bounds.minDays <= bounds.maxDays;
+  const actualView = compatible ? { ...view, span: clamp(view.span, bounds.minDays, bounds.maxDays) } : view;
+  const reserve = ab ? Math.max(previewHeight(a.config), previewHeight(b.config)) : previewHeight(config);
+  useEffect(() => {
+    if (compatible) setView(v => ({ ...v, span: clamp(v.span, bounds.minDays, bounds.maxDays) }));
+  }, [bounds.minDays, bounds.maxDays, compatible]);
+  useEffect(() => {
+    try { localStorage.setItem(STORAGE, JSON.stringify({ config, presets })); }
+    catch { setMessage('Der Browser konnte den Arbeitsstand nicht lokal speichern. JSON-Export bleibt verfügbar.'); }
+  }, [config, presets]);
+  const change = update => {
+    try { const next = validateConfig(update(cloneConfig(config))); setConfig(next); setMessage(''); }
+    catch (e) { setMessage(e.message); }
+  };
+  const classChange = (id, patch) => change(c => ({ ...c, classes: c.classes.map(v => v.id === id ? { ...v, ...patch } : v) }));
+  const groupChange = (group, patch) => change(c => ({ ...c, [group]: { ...c[group], ...patch } }));
+  const freeChange = (i, level) => change(c => ({ ...c, free: { ...c.free, levels: c.free.levels.map((v, n) => n === i ? level : v) } }));
+  const importJson = text => {
+    try { const next = validateConfig(JSON.parse(text)); cancelAnimationFrame(animation.current); setConfig(next); setExportType('json'); setSelectedPreset(''); setAB(false); setMessage('JSON importiert. Alle Einstellungen wiederhergestellt.'); }
+    catch (e) { setMessage(`Import abgelehnt: ${e.message}`); }
+  };
+  const savePreset = () => {
+    const name = presetName.trim();
+    if (!name || name === 'Ausgangsstand') { setMessage('Bitte einen eigenen Variantennamen eingeben. Ausgangsstand bleibt als Referenz erhalten.'); return; }
+    const existing = presets.find(p => p.name === name);
+    const id = existing?.id ?? `preset-${crypto.randomUUID()}`;
+    setPresets(p => [...p.filter(v => v.id !== id), { id, name, config: cloneConfig(config) }]);
+    setSelectedPreset(id); setBId(id); setMessage(`„${name}“ gespeichert. Weitere Änderungen bleiben zunächst im Arbeitsstand.`);
+  };
+  const loadPreset = id => {
+    const p = variants.find(p => p.id === id);
+    if (!p) return;
+    cancelAnimationFrame(animation.current); setSelectedPreset(id); setPresetName(id === 'baseline' ? '' : p.name); setConfig(cloneConfig(p.config)); setAB(false); setMessage(`„${p.name}“ geladen.`);
+  };
+  const usedBy = id => [...Object.entries(config.calendar).filter(([,l]) => l.classId === id).map(([key]) => calendarNames[key]), ...config.free.levels.flatMap((l,i) => l.classId === id ? [`Segmentebene ${i + 1}`] : [])];
+  const clearFocus = () => setFocus(f => ({ ...f, hover: null, selected: null }));
+  return <main>
+    <header className="app-header"><div><p className="eyebrow">ZEIT ALS GESTALTUNGSRAUM</p><h1>Timeline<span> / </span>Werkbank</h1><p>Raster formen. Verhalten spüren. Varianten finden.</p></div><span className="local-badge"><i /> LOKAL · V0.1</span></header>
+    <section className="sticky-preview">
+      <div className="preview-toolbar">
+        <SelectField label="Vorschaufläche" value={previewWidth} onChange={setPreviewWidth}><option value="auto">Volle Breite</option><option value="640">640 px</option><option value="960">960 px</option><option value="1280">1280 px</option></SelectField>
+        <SelectField label="Fokus" value={focus.mode} onChange={mode => setFocus(f => ({ ...f, mode, hover: null }))}><option value="auto">Hover / Auswahl</option><option value="fixed">Festgehaltener Punkt</option><option value="none">Kein Fokus</option></SelectField>
+        {focus.mode === 'fixed' && <label className="field"><span>Fokusdatum</span><input type="date" value={dateInput(focus.fixed)} onChange={e => { const fixed = dayOf(e.target.value); if (Number.isFinite(fixed)) setFocus(f => ({ ...f, fixed })); }} /></label>}
+        <button onClick={clearFocus}>Auswahl lösen</button>
+        <button aria-pressed={ab} onClick={() => { clearFocus(); setAB(!ab); }}>{ab ? '← Arbeitsstand' : 'A/B vergleichen'}</button>
+      </div>
+      {ab && <div className="compare-toolbar"><SelectField label="Variante A" value={a.id} onChange={setAId}>{variants.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</SelectField><span className="mono">SYNCHRON · {compatible ? `${bounds.minDays}–${bounds.maxDays} TAGE` : 'KEIN GEMEINSAMER BEREICH'}</span><SelectField label="Variante B" value={b.id} onChange={setBId}>{variants.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</SelectField></div>}
+      <div className={`preview-canvas ${ab ? 'compare' : ''}`} style={{ width: previewWidth === 'auto' ? '100%' : `${previewWidth}px` }}>
+        {!compatible ? <div className="incompatible">Diese Varianten haben keinen gemeinsamen Zoombereich. Wähle zwei Presets mit überlappenden Zeitspannen.</div> : ab ? <>{[a,b].map((p,i) => <Preview key={i} title={`${i === 0 ? 'A' : 'B'} · ${p.name}`} config={p.config} view={actualView} setView={setView} bounds={bounds} focus={focus} setFocus={setFocus} filter={filter} overrides={overrides} reserveHeight={reserve} animationRef={animation} />)}</> : <Preview config={config} view={actualView} setView={setView} bounds={bounds} focus={focus} setFocus={setFocus} filter={filter} overrides={overrides} reserveHeight={reserve} animationRef={animation} />}
+      </div>
+      <div className="filter-row"><span className="eyebrow">DEMO-THEMEN</span><button aria-pressed={!filter} onClick={() => setFilter('')}>Alle</button>{themes.map(t => <button key={t.id} style={{ '--theme': t.color }} aria-pressed={filter === t.id} onClick={() => setFilter(filter === t.id ? '' : t.id)}><i />{t.name}</button>)}</div>
+      <p className="preview-help">Scrollen zum Zoomen · Ziehen zum Verschieben · Klick für Auswahl · Pfeiltasten / + / −</p>
+    </section>
+    <div className="working-toolbar"><SelectField label="Preset laden" value={selectedPreset} onChange={loadPreset}><option value="" disabled>Arbeitsstand</option>{variants.map(p => <option value={p.id} key={p.id}>{p.name}</option>)}</SelectField><label className="field"><span>Variantenname</span><input type="text" maxLength={80} value={presetName} placeholder="z. B. Ruhiger Fokus" onChange={e => setPresetName(e.target.value)} /></label><button onClick={savePreset}>Speichern</button><button onClick={() => { setConfig(cloneConfig(DEFAULT_CONFIG)); setSelectedPreset('baseline'); setPresetName(''); setAB(false); setMessage('Ausgangsstand wiederhergestellt.'); }}>Zurücksetzen</button></div>
+    <p role="status" className="status global-status">{message || (ab ? 'Der Vergleich verwendet gespeicherte Presets. Regler ändern weiterhin den Arbeitsstand.' : 'Arbeitsstand automatisch gesichert · Presets ändern sich erst durch Speichern.')}</p>
+    <nav className="section-nav"><a href="#grid">01 Raster und Klassen</a><a href="#zoom">02 Zoom und Dichte</a><a href="#hover">03 Hover</a><a href="#appearance">04 Darstellung</a><a href="#export">05 Export</a></nav>
+    <section className="panel" id="grid"><div className="section-title"><span className="eyebrow">01 / RASTER UND KLASSEN</span><h2>Eine Klasse. Jede Marke.</h2><p>Größenklassen sind frei zuweisbar. Kalender und Messraster behalten ihre eigenen Einstellungen.</p></div>
+      <div className="mode-row">{[['calendar','Kalenderraster'],['free','Freies Messraster']].map(([mode,name]) => <button key={mode} aria-pressed={config.mode === mode} onClick={() => change(c => ({ ...c, mode }))}>{name}</button>)}<button disabled={config.classes.length >= 32} onClick={() => change(c => ({ ...c, classes: [...c.classes, { ...c.classes.at(-1), id: `class-${crypto.randomUUID()}`, name: `Klasse ${c.classes.length + 1}` }] }))}>+ Größenklasse</button></div>
+      <div className="class-grid">{config.classes.map(c => { const used = usedBy(c.id); return <article className="class-card" key={c.id}><div className="class-heading"><i style={{ height: Math.min(c.height, 45), width: c.width, background: c.color }} /><input aria-label={`Name ${c.id}`} type="text" maxLength={80} value={c.name} onChange={e => classChange(c.id, { name: e.target.value })} /><code>{c.id.startsWith('class-') ? c.id.slice(0,12) : c.id}</code></div><NumberField label={`Höhe ${c.name}`} value={c.height} min={1} max={160} unit="px" onChange={height => classChange(c.id, { height })} /><NumberField label={`Breite ${c.name}`} value={c.width} min={0.5} max={12} step={0.5} unit="px" onChange={width => classChange(c.id, { width })} /><label className="field"><span>Farbe {c.name}</span><input type="color" value={c.color} onChange={e => classChange(c.id, { color: e.target.value })} /></label><NumberField label={`Deckkraft ${c.name}`} value={c.opacity} min={0} max={1} step={0.05} onChange={opacity => classChange(c.id, { opacity })} /><NumberField label={`Abrundung ${c.name}`} value={c.radius} min={0} max={20} step={0.5} unit="px" onChange={radius => classChange(c.id, { radius })} /><div className="class-delete"><button disabled={used.length > 0 || config.classes.length === 1} onClick={() => change(v => ({ ...v, classes: v.classes.filter(l => l.id !== c.id) }))}>Klasse löschen</button><span>{used.length ? `Verwendet: ${used.join(', ')}. Vor dem Löschen neu zuordnen.` : 'Nicht zugeordnet'}</span></div></article>; })}</div>
+      <div className="raster-settings">{config.mode === 'calendar' ? <div className="level-grid">{Object.entries(config.calendar).map(([key,level]) => <LevelEditor key={key} label={calendarNames[key]} level={level} classes={config.classes} onChange={next => change(c => ({ ...c, calendar: { ...c.calendar, [key]: next } }))} override={overrides[key]} onOverride={value => setOverrides(o => ({ ...o, [key]: value }))} main={key === 'year' || key === 'month'} />)}</div> : <><div className="controls-grid"><label className="field"><span>Zeitanker Hauptsegment</span><input type="date" value={config.free.anchor} onChange={e => groupChange('free', { anchor: e.target.value })} /></label><NumberField label="Hauptsegmentdauer" value={config.free.durationDays} min={0.01} max={3660} step={0.01} unit="Tage" onChange={durationDays => groupChange('free', { durationDays })} /><button disabled={config.free.levels.length >= 8} onClick={() => groupChange('free', { levels: [...config.free.levels, { ...cloneConfig(config.free.levels.at(-1)), id: `level-${crypto.randomUUID()}`, divisions: 4 }] })}>+ Unterebene</button></div><p className="hint">Vier Untersegmente = vier Intervalle, drei zusätzliche innere Striche. Jede Unterebene teilt die vorherige gleichmäßig.</p><div className="level-grid">{config.free.levels.map((level,i) => { const key = i === 0 ? 'segment' : level.id; return <LevelEditor key={level.id} label={i === 0 ? 'Hauptsegment' : `Unterebene ${i}`} level={level} classes={config.classes} main={i === 0} onChange={next => freeChange(i,next)} override={overrides[key]} onOverride={value => setOverrides(o => ({ ...o, [key]: value }))}>{i > 0 && <button className="small-button" onClick={() => groupChange('free', { levels: config.free.levels.filter((_,n) => n !== i) })}>Entfernen</button>}{i > 0 && <NumberField label={`Unterebene ${i}: Intervalle`} value={level.divisions} min={2} max={100} onChange={divisions => freeChange(i,{ ...level, divisions })} />}</LevelEditor>; })}</div></> }</div>
+      <p className="hint">Vorschautests „Immer zeigen / Aus“ sind temporär und werden nicht exportiert.</p>
+    </section>
+    <section className="panel" id="zoom"><div className="section-title"><span className="eyebrow">02 / ZOOM UND DICHTE</span><h2>Näher kommen, ohne zu springen.</h2><p>Logarithmischer Zoom. Die Dichte- und Höhenübergänge jeder Ebene stehen bei den Rasterzuordnungen.</p></div><div className="controls-grid"><NumberField label="Kleinste Zeitspanne" value={config.zoom.minDays} min={0.1} max={3660} step={0.1} unit="Tage" onChange={minDays => groupChange('zoom', { minDays })} /><NumberField label="Größte Zeitspanne" value={config.zoom.maxDays} min={0.1} max={3660} step={0.1} unit="Tage" onChange={maxDays => groupChange('zoom', { maxDays })} /><NumberField label="Scroll-Empfindlichkeit" value={config.zoom.sensitivity} min={0.01} max={2} step={0.01} onChange={sensitivity => groupChange('zoom', { sensitivity })} /><NumberField label="Schritt der Zoomtasten" value={config.zoom.buttonStep} min={1} max={50} unit="%" onChange={buttonStep => groupChange('zoom', { buttonStep })} /><NumberField label="Zoomanimation" value={config.zoom.durationMs} min={0} max={2000} unit="ms" onChange={durationMs => groupChange('zoom', { durationMs })} /><SelectField label="Scroll-Zoomanker" value={config.zoom.anchor} onChange={anchor => groupChange('zoom', { anchor })}><option value="pointer">Mauszeiger</option><option value="center">Mitte</option></SelectField></div>
+      <form className="date-range" onSubmit={e => { e.preventDefault(); const form = new FormData(e.currentTarget), start = dayOf(form.get('start')), end = dayOf(form.get('end')); if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) { setMessage('Zeitraum: Das Enddatum muss nach dem Startdatum liegen.'); return; } if (!compatible) { setMessage('Zuerst Varianten mit gemeinsamem Zoombereich wählen.'); return; } const span = clamp(end - start, bounds.minDays, bounds.maxDays); cancelAnimationFrame(animation.current); setView({ center: (start + end) / 2, span }); setMessage(span !== end - start ? 'Zeitraum auf den gültigen Zoombereich begrenzt; Mittelpunkt erhalten.' : 'Zeitraum übernommen.'); }}><label>Von<input aria-label="Zeitraum von" type="date" name="start" defaultValue="2025-06-01" required /></label><label>Bis<input aria-label="Zeitraum bis" type="date" name="end" defaultValue="2025-11-01" required /></label><button>Zeitraum zeigen</button></form>
+    </section>
+    <section className="panel" id="hover"><div className="section-title"><span className="eyebrow">03 / HOVER</span><h2>Ein Fokus, der Raum lässt.</h2><p>Radius und Wölbung in CSS-Pixeln. Zeitpositionen und Grundlinie bleiben unverändert.</p></div><div className="controls-grid"><NumberField label="Radius je Seite" value={config.hover.radiusPx} min={1} max={300} unit="px" onChange={radiusPx => groupChange('hover', { radiusPx })} /><NumberField label="Zusätzliche Wölbung" value={config.hover.bumpPx} min={0} max={160} unit="px" onChange={bumpPx => groupChange('hover', { bumpPx })} /><NumberField label="Ruhehöhenfaktor" value={config.hover.restFactor} min={0} max={1} step={0.05} onChange={restFactor => groupChange('hover', { restFactor })} /><SelectField label="Kurvenform" value={config.hover.curve} onChange={curve => groupChange('hover', { curve })}><option value="compact">Kompakte Glocke</option><option value="cosine">Kosinusglocke</option><option value="smoothstep">Smoothstep</option></SelectField><NumberField label="Hoveranimation" value={config.hover.durationMs} min={0} max={2000} unit="ms" onChange={durationMs => groupChange('hover', { durationMs })} /><Toggle label="Auswahl als Fokus erhalten" checked={config.hover.keepSelection} onChange={keepSelection => groupChange('hover', { keepSelection })} /></div><p className="formula">Grundhöhe × Ruhefaktor + Wölbung × Kurvengewicht <span>Ohne Fokus: unveränderte Grundhöhe</span></p></section>
+    <section className="panel" id="appearance"><div className="section-title"><span className="eyebrow">04 / DARSTELLUNG</span><h2>Der Rahmen für deine Zeit.</h2></div><div className="controls-grid">{[['background','Hintergrund'],['accent','Akzent'],['baseline','Grundlinie'],['labelColor','Beschriftungsfarbe']].map(([key,label]) => <label className="field" key={key}><span>{label}</span><input type="color" value={config.appearance[key]} onChange={e => groupChange('appearance', { [key]: e.target.value })} /></label>)}<Toggle label="Beschriftungen zeigen" checked={config.appearance.showLabels} onChange={showLabels => groupChange('appearance', { showLabels })} /><Toggle label="Demo-Ereignisse zeigen" checked={config.appearance.showEvents} onChange={showEvents => groupChange('appearance', { showEvents })} /></div></section>
+    <section className="panel" id="export"><div className="section-title"><span className="eyebrow">05 / EXPORT</span><h2>Deine Einstellungen. Mitnehmbar.</h2><p>JSON enthält die vollständige Konfiguration. CSS enthält Klassen und statische Darstellungsvariablen. Exporte beziehen sich auf den Arbeitsstand.</p></div><div className="button-row"><button onClick={() => { setExportType('json'); setExportText(JSON.stringify(config, null, 2)); setMessage('JSON bereit.'); }}>JSON exportieren</button><button onClick={() => importJson(exportText)}>JSON importieren</button><label className="file-button">JSON-Datei öffnen<input type="file" accept=".json,application/json" onChange={async e => { const file = e.target.files?.[0]; if (file) { try { const text = await file.text(); setExportText(text); importJson(text); } catch { setMessage('Die JSON-Datei konnte nicht gelesen werden.'); } } e.target.value = ''; }} /></label><button onClick={() => { setExportType('css'); setExportText(cssExport(config)); setMessage('CSS bereit. Dynamisches Verhalten wird später über einen Konfigurationsadapter angebunden.'); }}>CSS exportieren</button><button disabled={!exportText} onClick={() => download(exportText, `timeline-config.${exportType}`, exportType === 'css' ? 'text/css' : 'application/json')}>Datei herunterladen</button></div><textarea aria-label="Export und JSON-Import" value={exportText} onChange={e => setExportText(e.target.value)} spellCheck={false} placeholder="JSON exportieren oder eine Konfiguration hier einfügen …" /><p className="hint">Einstellungen bleiben lokal in diesem Browser. Gespeicherte Presets und Vorschauzustände sind nicht Teil des Konfigurationsexports.</p></section>
+    <footer>Timeline-Werkbank <span>Eigenständige Vorschau · lokale Einstellungen · Demodaten</span></footer>
+  </main>;
+}
