@@ -7,7 +7,7 @@ JSON enthält die vollständige exportierbare Konfiguration. Vorschauzeitraum, V
 | `version` | Formatversion, derzeit ausschließlich `1` |
 | `mode` | `calendar` oder `free`; beide Rasterkonfigurationen bleiben enthalten |
 | `classes[]` | Stabile interne `id`, sichtbarer `name`, `height`/`width`/`radius` in CSS-Pixeln, `color` als `#RRGGBB`, `opacity` von 0 bis 1 |
-| `calendar.year/month/week/day.classId` | Größenklasse der Kalendergrenze; Jahr schlägt Monat, Monat schlägt Woche, Woche schlägt Tag |
+| `calendar.year/month/monthMiddle/week/day.classId` | Größenklasse der Kalendergrenze; Jahr schlägt Monat, Monat schlägt Monatsmitte, Monatsmitte schlägt Woche, Woche schlägt Tag |
 | `*.density.fromPx/toPx` | Tatsächlicher Abstand benachbarter Marken, zwischen dem die Deckkraft weich von 0 auf 1 steigt. Wichtige Hauptgrenzen behalten mindestens 0,2 Dichtefaktor. |
 | `*.height.fromPx/toPx` | Separater Abstandsbereich für die Höhenentwicklung |
 | `*.height.fromFactor/toFactor` | Faktoren der Klassenhöhe, weich zwischen Start- und Endwert interpoliert |
@@ -30,6 +30,24 @@ JSON enthält die vollständige exportierbare Konfiguration. Vorschauzeitraum, V
 Die Kalenderberechnung verwendet UTC-Tage, echte Monatslängen, Schaltjahre und ISO-Wochen mit Montagsbeginn. Kalenderpositionen werden nicht durch Hover verändert. Zusammenfallende Rastermarken werden einmal gezeichnet; die gröbere Ebene bestimmt ihre Darstellung. Die Vorschau reserviert ausreichend Höhe anhand der Konfiguration, sodass Grundlinie und Vorschauhöhe während Zoom und Hover stabil bleiben.
 
 Der Import prüft Wertebereiche, Formatversion, Klassenreferenzen und notwendige Felder zentral in `src/config.js`. Ohne erfolgreiche Validierung wird die bestehende Konfiguration nicht ersetzt. Es gibt kein automatisches Migrationsverfahren.
+
+## Kalenderlineal und additive Konfiguration
+
+Die Formatversion bleibt `1`. Konfigurationen aus v.01 werden beim Lesen um deaktivierte Monatsmitten, deaktivierten Kamera-Zoom und statische Beschriftung ergänzt. Bestehende Klassen-IDs, Zoomwerte und freie Raster bleiben erhalten. Gespeicherte Presets werden nicht automatisch umgeschrieben; erst explizites Speichern aktualisiert ein Preset. `Ausgangsstand` bietet die neuen Startwerte (Jahresansicht, Monatsmittenklasse, Kamera und dynamische Typografie).
+
+| Feld | Bedeutung / Einheit |
+|---|---|
+| `calendar.monthMiddle.enabled` | Monatsmitten aktivieren; halbe tatsächliche Monatsdauer, auf Tagesgrenze abgerundet (bei Gleichstand früher) |
+| `camera.enabled` | Kontinuierliches Geometriewachstum aktivieren |
+| `camera.referenceDays` | Referenzspanne in Tagen, standardmäßig 365 |
+| `camera.heightExponent` | Strichlänge wächst mit `max(1, referenceDays / sichtbareSpanne)^heightExponent` |
+| `camera.widthExponent/maxWidthFactor` | Langsameres Breitenwachstum nach derselben Potenz, durch Faktor begrenzt |
+| `labels.dynamic` | Platzabhängige Schriftgrößen und Hierarchie aktivieren |
+| `labels.baseSizePx/maxScale` | Basisgröße in CSS-Pixeln und maximale Schriftvergrößerung |
+
+Die vorhandene Höheninterpolation wird mit dem Kamerafaktor multipliziert; Hover wirkt anschließend in unveränderten CSS-Pixeln. Kamerafaktoren beeinflussen weder Grundlinie noch Vorschauhöhe. Überlange Striche werden oben abgeschnitten. Der Labelbereich reserviert die konfigurierte maximale zweizeilige Höhe, bleibt während Zoom und Hover konstant und ist in A/B gemeinsam.
+
+Labels werden exakt auf dem Tick zentriert; Randlabels dürfen abgeschnitten werden. Bei Kollisionen gewinnt die gröbere Beschriftung, ohne die Zeitposition zu verschieben. KW steht immer über der Nummer. Ein kleiner Monat-/Jahrkontext zeigt die Ausschnittsmitte, wenn eine Hauptgrenze außerhalb liegt. Die verfügbaren Intervallbreiten bestimmen weiches Einblenden und maßvolle Schriftvergrößerung.
 
 ## CSS-Ausgabe und spätere Integration
 

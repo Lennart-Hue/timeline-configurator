@@ -7,10 +7,12 @@ export const DEFAULT_CONFIG = {
     { id: 'major', name: 'Groß', height: 80, width: 2, color: '#858991', opacity: 1, radius: 1 },
     { id: 'medium', name: 'Mittel', height: 20, width: 1.5, color: '#676b73', opacity: 1, radius: 1 },
     { id: 'fine', name: 'Fein', height: 20, width: 1, color: '#50545c', opacity: 1, radius: 0.5 },
+    { id: 'midpoint', name: 'Monatsmitte', height: 44, width: 1.5, color: '#747982', opacity: 1, radius: 1 },
   ],
   calendar: {
     year: { classId: 'major', ...transition(0, 1) },
     month: { classId: 'major', ...transition(0, 1) },
+    monthMiddle: { enabled: true, classId: 'midpoint', ...transition(4, 13) },
     week: { classId: 'medium', ...transition(4, 13, 1, 1.5), height: { fromPx: 42, toPx: 196, fromFactor: 1, toFactor: 1.5 } },
     day: { classId: 'fine', ...transition(4, 13) },
   },
@@ -23,7 +25,9 @@ export const DEFAULT_CONFIG = {
       { id: 'detail', divisions: 7, classId: 'fine', ...transition(4, 13) },
     ],
   },
-  zoom: { minDays: 7, maxDays: 153, sensitivity: 0.22, buttonStep: 10, durationMs: 420, anchor: 'pointer' },
+  zoom: { minDays: 1, maxDays: 366, sensitivity: 0.22, buttonStep: 10, durationMs: 420, anchor: 'pointer' },
+  camera: { enabled: true, referenceDays: 365, heightExponent: 0.55, widthExponent: 0.18, maxWidthFactor: 2.5 },
+  labels: { dynamic: true, baseSizePx: 11, maxScale: 1.5 },
   hover: { radiusPx: 40, bumpPx: 76, curve: 'compact', restFactor: 0.25, durationMs: 160, keepSelection: true },
   appearance: { background: '#0e0f10', accent: '#df9b70', baseline: '#34363b', labelColor: '#98999c', showLabels: true, showEvents: true },
 };
@@ -39,6 +43,11 @@ export function validateConfig(value) {
   const color = (v, name) => { if (typeof v !== 'string' || !/^#[0-9a-f]{6}$/i.test(v)) fail(`${name}: Farbe im Format #RRGGBB erwartet.`); };
   object(value, 'Konfiguration');
   if (value.version !== 1) fail('Unbekannte Formatversion. Unterstützt wird Version 1.');
+  value = cloneConfig(value);
+  // Fehlende additive Felder erhalten die alte Gestaltung und alle Klassen-IDs.
+  if (value.calendar && !Object.hasOwn(value.calendar, 'monthMiddle')) value.calendar.monthMiddle = { enabled: false, classId: value.calendar.week?.classId, ...transition(4, 13) };
+  if (!Object.hasOwn(value, 'camera')) value.camera = { ...DEFAULT_CONFIG.camera, enabled: false };
+  if (!Object.hasOwn(value, 'labels')) value.labels = { ...DEFAULT_CONFIG.labels, baseSizePx: 10, dynamic: false };
   if (!['calendar', 'free'].includes(value.mode)) fail('Rastermodus muss calendar oder free sein.');
   if (!Array.isArray(value.classes) || !value.classes.length || value.classes.length > 32) fail('1 bis 32 Größenklassen erwartet.');
   const ids = new Set();
@@ -63,6 +72,7 @@ export function validateConfig(value) {
   };
   object(value.calendar, 'Kalenderraster');
   for (const key of ['year', 'month', 'week', 'day']) level(value.calendar[key], key);
+  level(value.calendar.monthMiddle, 'Monatsmitte'); bool(value.calendar.monthMiddle.enabled, 'Monatsmitte aktiv');
   object(value.free, 'Freies Raster');
   if (typeof value.free.anchor !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value.free.anchor) || !Number.isFinite(Date.parse(value.free.anchor)) || new Date(value.free.anchor).toISOString().slice(0, 10) !== value.free.anchor) fail('Zeitanker: gültiges Datum YYYY-MM-DD erwartet.');
   number(value.free.durationDays, 0.01, 3660, 'Hauptsegmentdauer');
@@ -80,6 +90,11 @@ export function validateConfig(value) {
   if (value.zoom.maxDays <= value.zoom.minDays) fail('Die größte Zeitspanne muss größer als die kleinste sein.');
   number(value.zoom.sensitivity, 0.01, 2, 'Scroll-Empfindlichkeit'); number(value.zoom.buttonStep, 1, 50, 'Zoomschritt'); number(value.zoom.durationMs, 0, 2000, 'Zoomanimation');
   if (!['pointer', 'center'].includes(value.zoom.anchor)) fail('Zoomanker muss pointer oder center sein.');
+  object(value.camera, 'Kamera-Zoom'); bool(value.camera.enabled, 'Kamera-Zoom aktiv');
+  number(value.camera.referenceDays, 1, 3660, 'Kamera-Referenzspanne');
+  number(value.camera.heightExponent, 0, 1.5, 'Längenwachstum'); number(value.camera.widthExponent, 0, 1, 'Breitenwachstum'); number(value.camera.maxWidthFactor, 1, 5, 'Maximaler Breitenfaktor');
+  object(value.labels, 'Beschriftung'); bool(value.labels.dynamic, 'Dynamische Beschriftung');
+  number(value.labels.baseSizePx, 8, 20, 'Basis-Schriftgröße'); number(value.labels.maxScale, 1, 2, 'Maximale Schriftvergrößerung');
   object(value.hover, 'Hover');
   number(value.hover.radiusPx, 1, 300, 'Hoverradius'); number(value.hover.bumpPx, 0, 160, 'Wölbung'); number(value.hover.restFactor, 0, 1, 'Ruhehöhenfaktor'); number(value.hover.durationMs, 0, 2000, 'Hoveranimation');
   if (!['compact', 'cosine', 'smoothstep'].includes(value.hover.curve)) fail('Unbekannte Hoverkurve.');

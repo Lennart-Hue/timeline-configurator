@@ -22,11 +22,12 @@ h1 span { color: var(--accent); }
 .preview-header .eyebrow { color: var(--preview-accent); }
 .time-track { height: 230px; position: relative; overflow: hidden; cursor: grab; touch-action: pan-y; user-select: none; }
 .time-track:active { cursor: grabbing; }
-.ruler { position: absolute; inset: auto 0 45px; height: 160px; border-bottom: 1px solid; }
+.ruler { position: absolute; inset: auto 0 62px; height: 160px; border-bottom: 1px solid; }
 .tick { position: absolute; bottom: 0; height: 100%; display: flex; align-items: flex-end; }
 .tick i { display: block; transform: translateX(-50%); transition: height .16s ease-out; }
-.tick small { position: absolute; top: calc(100% + 12px); color: var(--label); font: 10px var(--mono); white-space: nowrap; }
-.focus-guide { position: absolute; bottom: 45px; width: 1px; height: 170px; border-left: 1px dashed #df9b7066; pointer-events: none; }
+.tick small { position: absolute; top: calc(100% + 12px); left: 0; transform: translateX(-50%); text-align: center; color: var(--label); font-family: var(--mono); line-height: 1.25; white-space: pre; transition: opacity .18s ease-out, font-size .18s ease-out; }
+.calendar-context { font: 10px var(--mono); color: var(--label); margin-top: 10px; min-height: 13px; }
+.focus-guide { position: absolute; bottom: 62px; width: 1px; height: 170px; border-left: 1px dashed #df9b7066; pointer-events: none; }
 .focus-guide span { position: absolute; top: 2px; transform: translateX(-50%); white-space: nowrap; font: 10px var(--mono); color: var(--preview-accent); background: #191a1c; padding: 5px 8px; border-radius: 4px; }
 .zoom-row { display: flex; align-items: center; gap: 10px; }
 .zoom-row button { padding: 3px 10px; font-size: 19px; }

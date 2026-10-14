@@ -15,6 +15,27 @@ export function calendarWeek(day) {
   const year = new Date(thursday * DAY).getUTCFullYear();
   return { year, week: 1 + Math.round((weekStart(thursday) - weekStart(Date.UTC(year, 0, 4) / DAY)) / 7) };
 }
+export function monthMiddle(day) {
+  const d = new Date(day * DAY), y = d.getUTCFullYear(), m = d.getUTCMonth();
+  const first = Date.UTC(y, m, 1) / DAY, next = Date.UTC(y, m + 1, 1) / DAY;
+  // .5 liegt gleich weit von zwei Tagesgrenzen entfernt: die frühere gewinnt.
+  return first + Math.floor((next - first) / 2);
+}
+export const cameraScale = (config, span) => {
+  if (!config.camera?.enabled) return { height: 1, width: 1 };
+  const magnification = Math.max(1, config.camera.referenceDays / span);
+  return { height: magnification ** config.camera.heightExponent, width: Math.min(config.camera.maxWidthFactor, magnification ** config.camera.widthExponent) };
+};
+export function labelStyle(config, kind, spacingPx, pxPerDay) {
+  const settings = config.labels ?? { dynamic: false, baseSizePx: 10, maxScale: 1 };
+  const dynamic = settings.dynamic;
+  const monthDetail = smoothstep((pxPerDay * 30 - 55) / 100);
+  const scale = dynamic ? 1 + (settings.maxScale - 1) * smoothstep(Math.log2(Math.max(1, pxPerDay * 30 / 50)) / 5) : 1;
+  const size = settings.baseSizePx * scale * (kind === 'year' ? 1.2 : 1);
+  const opacity = kind === 'week' ? smoothstep((spacingPx - 24) / 30) : kind === 'day' ? smoothstep((spacingPx - 13) / 17) : 1;
+  const weight = kind === 'year' ? (dynamic && monthDetail > 0.6 ? 800 : 700) : kind === 'month' && dynamic && monthDetail > 0.35 ? 700 : 400;
+  return { size, weight, opacity };
+}
 export const hoverWeight = (distancePx, hover) => {
   const t = Math.abs(distancePx) / hover.radiusPx;
   if (t >= 1) return 0;
@@ -25,11 +46,13 @@ export const focusHeight = (base, day, focus, pxPerDay, hover) => focus == null 
 
 const calendarSpacing = (day, kind) => {
   const d = new Date(day * DAY), y = d.getUTCFullYear(), m = d.getUTCMonth();
-  return kind === 'year' ? (Date.UTC(y + 1, 0, 1) - Date.UTC(y, 0, 1)) / DAY : kind === 'month' ? (Date.UTC(y, m + 1, 1) - Date.UTC(y, m, 1)) / DAY : kind === 'week' ? 7 : 1;
+  const monthDays = (Date.UTC(y, m + 1, 1) - Date.UTC(y, m, 1)) / DAY;
+  return kind === 'year' ? (Date.UTC(y + 1, 0, 1) - Date.UTC(y, 0, 1)) / DAY : kind === 'month' ? monthDays : kind === 'monthMiddle' ? monthDays / 2 : kind === 'week' ? 7 : 1;
 };
 
 export function ruler(config, start, end, width, overrides = {}) {
   const ticks = new Map(), pxPerDay = width / (end - start), omitted = [];
+  const camera = cameraScale(config, end - start);
   const add = (day, kind, spec, spacing, label) => {
     const key = Math.round(day * 1e8);
     if (ticks.has(key) || overrides[kind] === 'off') return;
@@ -40,14 +63,14 @@ export function ruler(config, start, end, width, overrides = {}) {
     const opacity = overrides[kind] === 'always' ? 1 : main ? Math.max(0.2, density) : density;
     if (opacity <= 0) return;
     const factor = spec.height.fromFactor + (spec.height.toFactor - spec.height.fromFactor) * smoothstep((distance - spec.height.fromPx) / (spec.height.toPx - spec.height.fromPx));
-    ticks.set(key, { day, kind, style, opacity, height: style.height * factor, label });
+    ticks.set(key, { day, kind, style, opacity, height: style.height * factor * camera.height, tickWidth: style.width * camera.width, label, labelStyle: labelStyle(config, kind, distance, pxPerDay) });
   };
   if (config.mode === 'calendar') {
     // In UTC bleiben Monatslängen, Schalttage und Montagsgrenzen unabhängig von DST.
     for (let day = Math.ceil(start); day < end; day++) {
       const d = new Date(day * DAY);
-      const kind = d.getUTCDate() === 1 ? d.getUTCMonth() === 0 ? 'year' : 'month' : d.getUTCDay() === 1 ? 'week' : 'day';
-      const label = kind === 'year' ? String(d.getUTCFullYear()) : kind === 'month' ? formatDay(day, { month: 'short' }).toUpperCase() : kind === 'week' && pxPerDay * 7 >= 55 ? `KW ${calendarWeek(day).week}` : kind === 'day' && pxPerDay >= 28 ? formatDay(day, { day: '2-digit' }) : null;
+      const kind = d.getUTCDate() === 1 ? d.getUTCMonth() === 0 ? 'year' : 'month' : config.calendar.monthMiddle?.enabled && day === monthMiddle(day) ? 'monthMiddle' : d.getUTCDay() === 1 ? 'week' : 'day';
+      const label = kind === 'year' ? String(d.getUTCFullYear()) : kind === 'month' ? formatDay(day, { month: 'short' }).toUpperCase() : kind === 'week' ? `KW\n${calendarWeek(day).week}` : kind === 'day' ? formatDay(day, { day: '2-digit' }) : null;
       add(day, kind, config.calendar[kind], calendarSpacing(day, kind), label);
     }
   } else {
@@ -69,14 +92,15 @@ export function ruler(config, start, end, width, overrides = {}) {
   const occupied = [];
   // Hauptbeschriftungen bekommen Platz zuerst; Markenpositionen werden nie verschoben.
   for (const t of [...result].filter(t => t.label).sort((a, b) => {
-    const priority = t => ['year', 'month', 'segment'].includes(t.kind) ? 0 : 1;
+    const priority = t => t.kind === 'year' ? 0 : ['month', 'segment'].includes(t.kind) ? 1 : t.kind === 'week' ? 2 : 3;
     return priority(a) - priority(b) || a.day - b.day;
   })) {
-    const size = t.label.length * 6 + 8;
+    if (t.labelStyle.opacity <= 0) { t.label = null; continue; }
+    const size = Math.max(...t.label.split('\n').map(s => s.length)) * t.labelStyle.size * 0.7 + 10;
     const position = (t.day - start) * pxPerDay;
-    const left = clamp(position, 0, Math.max(0, width - size));
+    const left = position - size / 2;
     if (occupied.some(([a, b]) => left < b && left + size > a)) t.label = null;
-    else { occupied.push([left, left + size]); t.labelOffset = left - position; }
+    else { occupied.push([left, left + size]); t.labelOffset = 0; t.labelBounds = [left, left + size]; }
   }
   return { ticks: result, omitted, pxPerDay };
 }
@@ -86,3 +110,5 @@ export const previewHeight = config => {
   const base = Math.max(...specs.map(s => config.classes.find(c => c.id === s.classId).height * Math.max(s.height.fromFactor, s.height.toFactor)));
   return Math.max(160, base, base * config.hover.restFactor + config.hover.bumpPx);
 };
+
+export const previewLabelSpace = config => Math.max(62, (config.labels?.baseSizePx ?? 10) * (config.labels?.maxScale ?? 1) * 2.5 + 16);
