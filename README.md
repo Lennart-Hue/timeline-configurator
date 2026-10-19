@@ -12,7 +12,7 @@ npm ci
 npm run dev -- --strictPort
 ```
 
-Vorschau: `http://127.0.0.1:4174/`. Der Server bindet ausschließlich an die lokale Loopback-Adresse. Bei belegtem Port einen freien Port über `--port` wählen.
+Vorschau: `http://127.0.0.1:4173/`. Der Server bindet ausschließlich an die lokale Loopback-Adresse. Bei belegtem Port einen freien Port über `--port` wählen.
 
 ```sh
 npm test
